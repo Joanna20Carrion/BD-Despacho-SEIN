@@ -419,6 +419,18 @@ with tab_rec:
             st.success(f"Mes {fuentes.MESES[mes - 1]} {anio} agregado. Complétalo en la tabla.")
             st.rerun()
 
+    with st.expander("🗑️ Eliminar un mes", expanded=False):
+        if rec.empty:
+            st.info("No hay meses para eliminar.")
+        else:
+            mes_borrar = st.selectbox("Mes a eliminar", rec["Fecha"].tolist(),
+                                      format_func=lambda d: f"{fuentes.MESES[d.month - 1]} {d.year}")
+            confirmo = st.checkbox(f"Sí, quiero eliminar {fuentes.MESES[mes_borrar.month - 1]} {mes_borrar.year}")
+            if st.button("Eliminar mes", disabled=not confirmo):
+                bd.eliminar_mes_recursos(con(), mes_borrar)
+                st.success(f"Mes {fuentes.MESES[mes_borrar.month - 1]} {mes_borrar.year} eliminado.")
+                st.rerun()
+
     editado = st.data_editor(
         rec, hide_index=True, width="stretch", height=450, num_rows="fixed",
         column_config={"Fecha": st.column_config.DateColumn("Fecha", format="MMM-YYYY", disabled=True)}

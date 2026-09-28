@@ -108,3 +108,12 @@ def agregar_centrales(con, nombres: list[str]) -> None:
                 (nombre, nombre, orden),
             )
     con.commit()
+
+
+def eliminar_mes_recursos(con, fecha) -> int:
+    """Borra un mes de la tabla "Recursos". Devuelve cuántas filas borró."""
+    with con.cursor() as cur:
+        cur.execute('delete from public."Recursos" where "Fecha" = %s', (fecha,))
+        n = cur.rowcount
+    con.commit()
+    return n
