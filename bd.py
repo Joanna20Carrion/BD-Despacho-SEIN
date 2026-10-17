@@ -74,6 +74,7 @@ def estado_tablas(con) -> pd.DataFrame:
         ("Demanda_E", 'select count(*), max("FECHA") from public."Demanda_E"'),
         ("Temperatura", 'select count(*), max(make_date("AÑO","MES",1)) from public."Temperatura"'),
         ("Recursos", 'select count(*), max("Fecha") from public."Recursos"'),
+        ("Potencia_Instalada", 'select count(*), max("Fecha") from public."Potencia_Instalada"'),
     ]
     out = []
     with con.cursor() as cur:
@@ -110,10 +111,15 @@ def agregar_centrales(con, nombres: list[str]) -> None:
     con.commit()
 
 
-def eliminar_mes_recursos(con, fecha) -> int:
-    """Borra un mes de la tabla "Recursos". Devuelve cuántas filas borró."""
+def eliminar_mes(con, tabla: str, fecha) -> int:
+    """Borra un mes de una tabla mensual ("Recursos" o "Potencia_Instalada")."""
     with con.cursor() as cur:
-        cur.execute('delete from public."Recursos" where "Fecha" = %s', (fecha,))
+        cur.execute(f'delete from public.{q(tabla)} where "Fecha" = %s', (fecha,))
         n = cur.rowcount
     con.commit()
     return n
+
+
+def eliminar_mes_recursos(con, fecha) -> int:
+    """Borra un mes de la tabla "Recursos". Devuelve cuántas filas borró."""
+    return eliminar_mes(con, "Recursos", fecha)
