@@ -6,7 +6,8 @@ Pestañas:
   2. CMG         -> descarga CMg del COES y guarda SANTA ROSA 220 en "CMG"
   3. Demanda     -> subes DemandaCOES.xlsx y guarda en "Demanda_E"
   4. Temperatura -> subes table.csv y guarda el promedio mensual en "Temperatura"
-  5. Recursos    -> tabla editable, guardas en "Recursos"
+  5. Recursos    -> tabla editable, guardas en "Recursos" (energía mensual GWh)
+  6. Potencia    -> tabla editable, guardas en "Potencia_Instalada" (MW mensual)
 """
 from __future__ import annotations
 
@@ -230,9 +231,10 @@ for tabla in ("Despacho", "CMG", "Demanda_E"):
 ult_t = est.loc["Temperatura", "Último dato"]
 tarjetas.append(tarjeta("TEMPERATURA", f"Último mes: {ult_t:%Y-%m}" if ult_t else "Sin registros",
                         _meses_entre(ult_t, HOY) if ult_t else None, "mes(es)"))
-ult_r = est.loc["Recursos", "Último dato"]
-tarjetas.append(tarjeta("RECURSOS", f"Último mes: {ult_r:%Y-%m}" if ult_r else "Sin registros",
-                        _meses_entre(ult_r, mes_ant) if ult_r else None, "mes(es)"))
+for tabla, nombre in (("Recursos", "RECURSOS"), ("Potencia_Instalada", "POTENCIA INSTALADA")):
+    ult_m = est.loc[tabla, "Último dato"]
+    tarjetas.append(tarjeta(nombre, f"Último mes: {ult_m:%Y-%m}" if ult_m else "Sin registros",
+                            _meses_entre(ult_m, mes_ant) if ult_m else None, "mes(es)"))
 
 c_tit, c_btn = st.columns([5, 1])
 c_tit.markdown('<div class="seccion-titulo">Estado de los datos</div>', unsafe_allow_html=True)
@@ -243,8 +245,8 @@ with c_btn:
 st.markdown('<div class="grid-estado">' + "".join(tarjetas) + "</div>", unsafe_allow_html=True)
 
 st.markdown('<div class="seccion-titulo">Actualizar</div>', unsafe_allow_html=True)
-tab_desp, tab_cmg, tab_dem, tab_temp, tab_rec = st.tabs(
-    ["⚡ Despacho Ejecutado", "💲 CMG", "📈 Demanda", "🌡️ Temperatura", "🏭 Recursos"])
+tab_desp, tab_cmg, tab_dem, tab_temp, tab_rec, tab_pot = st.tabs(
+    ["⚡ Despacho Ejecutado", "💲 CMG", "📈 Demanda", "🌡️ Temperatura", "🏭 Recursos", "🔌 Potencia"])
 
 
 def rango_fechas(clave: str, ultimo) -> tuple[date, date]:
@@ -399,47 +401,62 @@ with tab_temp:
 # ===========================================================================
 # 5) RECURSOS
 # ===========================================================================
-with tab_rec:
-    st.markdown("#### " + "Recursos - energía mensual (GWh)")
-    st.caption("Edita las celdas o agrega un mes nuevo y luego presiona **Guardar cambios**.")
+def editor_mensual(tabla: str, clave: str, copiar_mes_anterior: bool, etiquetas: dict | None = None):
+    """Tabla mensual editable (una fila por mes, clave "Fecha"): agregar, eliminar y editar meses.
 
-    rec = bd.leer(con(), 'select * from public."Recursos" order by "Fecha" desc')
-    rec["Fecha"] = pd.to_datetime(rec["Fecha"]).dt.date
+    copiar_mes_anterior: al agregar un mes nuevo, lo llena con los valores del último mes
+    (útil para la potencia instalada, que cambia poco); si es False lo llena con ceros.
+    """
+    etiquetas = etiquetas or {}
+    nom_mes = lambda d: f"{fuentes.MESES[d.month - 1]} {d.year}"
+
+    df = bd.leer(con(), f'select * from public.{bd.q(tabla)} order by "Fecha" desc')
+    df["Fecha"] = pd.to_datetime(df["Fecha"]).dt.date
+    num = [c for c in df.columns if c != "Fecha"]
 
     with st.expander("➕ Agregar un mes nuevo", expanded=False):
-        ultimo_mes = rec["Fecha"].max() if not rec.empty else date(HOY.year, HOY.month, 1)
+        ultimo_mes = df["Fecha"].max() if not df.empty else date(HOY.year, HOY.month, 1)
         sig = (pd.Timestamp(ultimo_mes) + pd.offsets.MonthBegin(1)).date()
         c1, c2 = st.columns(2)
-        anio = c1.number_input("Año", 2010, 2100, sig.year)
-        mes = c2.selectbox("Mes", range(1, 13), index=sig.month - 1, format_func=lambda m: fuentes.MESES[m - 1])
-        if st.button("Agregar fila"):
-            nueva = {c: 0.0 for c in rec.columns}
-            nueva["Fecha"] = date(int(anio), int(mes), 1)
-            bd.upsert(con(), "Recursos", pd.DataFrame([nueva]), ["Fecha"])
-            st.success(f"Mes {fuentes.MESES[mes - 1]} {anio} agregado. Complétalo en la tabla.")
-            st.rerun()
+        anio = c1.number_input("Año", 2010, 2100, sig.year, key=f"anio_{clave}")
+        mes = c2.selectbox("Mes", range(1, 13), index=sig.month - 1,
+                           format_func=lambda m: fuentes.MESES[m - 1], key=f"mes_{clave}")
+        if copiar_mes_anterior and not df.empty:
+            st.caption("Se copiarán los valores del mes anterior; luego cambia solo lo que varió.")
+        if st.button("Agregar fila", key=f"add_{clave}"):
+            fecha = date(int(anio), int(mes), 1)
+            if fecha in set(df["Fecha"]):
+                st.warning(f"{nom_mes(fecha)} ya existe; edítalo directamente en la tabla.")
+            else:
+                if copiar_mes_anterior and not df.empty:
+                    previos = df[df["Fecha"] < fecha]  # df está ordenado de más reciente a más antiguo
+                    base = (previos.iloc[0] if not previos.empty else df.iloc[-1])[num].to_dict()
+                else:
+                    base = {c: 0.0 for c in num}
+                bd.upsert(con(), tabla, pd.DataFrame([{"Fecha": fecha, **base}]), ["Fecha"])
+                st.success(f"Mes {nom_mes(fecha)} agregado. Complétalo en la tabla.")
+                st.rerun()
 
     with st.expander("🗑️ Eliminar un mes", expanded=False):
-        if rec.empty:
+        if df.empty:
             st.info("No hay meses para eliminar.")
         else:
-            mes_borrar = st.selectbox("Mes a eliminar", rec["Fecha"].tolist(),
-                                      format_func=lambda d: f"{fuentes.MESES[d.month - 1]} {d.year}")
-            confirmo = st.checkbox(f"Sí, quiero eliminar {fuentes.MESES[mes_borrar.month - 1]} {mes_borrar.year}")
-            if st.button("Eliminar mes", disabled=not confirmo):
-                bd.eliminar_mes_recursos(con(), mes_borrar)
-                st.success(f"Mes {fuentes.MESES[mes_borrar.month - 1]} {mes_borrar.year} eliminado.")
+            mes_borrar = st.selectbox("Mes a eliminar", df["Fecha"].tolist(), format_func=nom_mes,
+                                      key=f"del_sel_{clave}")
+            confirmo = st.checkbox(f"Sí, quiero eliminar {nom_mes(mes_borrar)}", key=f"del_ok_{clave}")
+            if st.button("Eliminar mes", disabled=not confirmo, key=f"del_{clave}"):
+                bd.eliminar_mes(con(), tabla, mes_borrar)
+                st.success(f"Mes {nom_mes(mes_borrar)} eliminado.")
                 st.rerun()
 
     editado = st.data_editor(
-        rec, hide_index=True, width="stretch", height=450, num_rows="fixed",
+        df, hide_index=True, width="stretch", height=450, num_rows="fixed",
         column_config={"Fecha": st.column_config.DateColumn("Fecha", format="MMM-YYYY", disabled=True)}
-        | {c: st.column_config.NumberColumn(c, format="%.3f") for c in rec.columns if c != "Fecha"},
-        key="ed_rec",
+        | {c: st.column_config.NumberColumn(etiquetas.get(c, c), format="%.3f") for c in num},
+        key=f"ed_{clave}",
     )
-    if st.button("💾 Guardar cambios", type="primary", key="save_rec", width="stretch"):
-        cambios = editado.merge(rec, on="Fecha", how="left", suffixes=("", "_orig"), indicator=False)
-        num = [c for c in rec.columns if c != "Fecha"]
+    if st.button("💾 Guardar cambios", type="primary", key=f"save_{clave}", width="stretch"):
+        cambios = editado.merge(df, on="Fecha", how="left", suffixes=("", "_orig"), indicator=False)
         mod = pd.Series(False, index=cambios.index)
         for c in num:
             mod |= ~((cambios[c] == cambios[f"{c}_orig"]) | (cambios[c].isna() & cambios[f"{c}_orig"].isna()))
@@ -448,8 +465,27 @@ with tab_rec:
         if df_mod.empty:
             st.info("No hay cambios que guardar.")
         else:
-            n = bd.upsert(con(), "Recursos", df_mod, ["Fecha"])
+            n = bd.upsert(con(), tabla, df_mod, ["Fecha"])
             st.success(f"✅ {n} mes(es) actualizados: " + ", ".join(f"{d:%b-%Y}" for d in df_mod["Fecha"]))
+
+
+with tab_rec:
+    st.markdown("#### " + "Recursos - energía mensual (GWh)")
+    st.caption("Edita las celdas o agrega un mes nuevo y luego presiona **Guardar cambios**.")
+    editor_mensual("Recursos", "rec", copiar_mes_anterior=False)
+
+
+# ===========================================================================
+# 6) POTENCIA INSTALADA
+# ===========================================================================
+with tab_pot:
+    st.markdown("#### " + "Potencia instalada mensual (MW)")
+    st.caption("Potencia instalada del SEIN por tecnología (antes columnas S, T, U, V de Energía_Mensual del Excel). "
+               "Power BI usa Hidro y Eólica para calcular el **Factor de Planta**: un mes sin potencia no se grafica. "
+               "Edita las celdas o agrega un mes nuevo y luego presiona **Guardar cambios**.")
+    editor_mensual("Potencia_Instalada", "pot", copiar_mes_anterior=True,
+                   etiquetas={"Hidro_MW": "Hidro (MW)", "Termo_MW": "Termoeléctrica (MW)",
+                              "Eolica_MW": "Eólica (MW)", "Solar_MW": "Solar (MW)"})
 
 st.markdown(f'<div class="subtitulo-app" style="margin-top:2rem">© BD Despacho SEIN · USGE · '
             f'{datetime.now(ZoneInfo("America/Lima")):%d/%m/%Y %H:%M}</div>', unsafe_allow_html=True)
